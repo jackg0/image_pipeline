@@ -44,6 +44,12 @@
 #include <dynamic_reconfigure/server.h>
 #include <image_proc/DebayerConfig.h>
 
+#ifdef HAVE_ICEORYX
+#include <functional>
+#include <iceoryx_posh/runtime/posh_runtime.hpp>
+#include <iceoryx_posh/popo/publisher.hpp>
+#endif
+
 #include <opencv2/imgproc/imgproc.hpp>
 // Until merged into OpenCV
 #include "edge_aware.h"
@@ -54,6 +60,54 @@ namespace image_proc {
 
 namespace enc = sensor_msgs::image_encodings;
 
+namespace {
+
+#ifdef HAVE_ICEORYX
+struct ScopedAction
+{
+  using Action = std::function<void(void)>;
+
+  ScopedAction(Action action):
+    action(std::move(action))
+  {
+  }
+
+  ScopedAction(const ScopedAction &) = delete;
+  ScopedAction &operator=(const ScopedAction &) = delete;
+  ScopedAction(ScopedAction &&) = default;
+  ScopedAction &operator=(ScopedAction &&) = default;
+
+  ~ScopedAction()
+  {
+    if (action)
+      action();
+  }
+
+  Action action;
+};
+
+std::unique_ptr<iox::popo::Publisher> instantiateIoxPublisher(const ros::NodeHandle &nh, const std::string &topic)
+{
+  iox::runtime::PoshRuntime::getInstance(nh.resolveName("/image_proc_debayer"));
+
+  if (topic.size() > 100)
+  {
+    throw std::invalid_argument(
+      "image_proc debayer nodelet: topic " +
+      topic + " is too long (max: 100 chars)");
+  }
+
+  iox::cxx::CString100 topicCStr;
+  topicCStr.unsafe_assign(topic);
+
+  return std::unique_ptr<iox::popo::Publisher>{
+    new iox::popo::Publisher(iox::capro::ServiceDescription{"debayer", "0", topicCStr})};
+}
+
+#endif
+
+} // namespace
+
 class DebayerNodelet : public nodelet::Nodelet
 {
   // ROS communication
@@ -63,6 +117,22 @@ class DebayerNodelet : public nodelet::Nodelet
   boost::mutex connect_mutex_;
   image_transport::Publisher pub_mono_;
   image_transport::Publisher pub_color_;
+
+  #ifdef HAVE_ICEORYX
+  // Iceoryx publishers.
+  std::unique_ptr<iox::popo::Publisher> iox_mono_{ };
+  std::unique_ptr<iox::popo::Publisher> iox_color_{ };
+
+  iox::popo::Publisher* ioxMono() { return iox_mono_.get(); }
+  iox::popo::Publisher* ioxColor() { return iox_color_.get(); }
+
+  void publishIoxImage(iox::popo::Publisher *pub, const sensor_msgs::ImageConstPtr &img);
+  #else
+  void* ioxMono() { return 0; }
+  void* ioxColor() { return 0; }
+
+  void publishIoxImage(void *, const sensor_msgs::ImageConstPtr &) { }
+  #endif
 
   // Dynamic reconfigure
   boost::recursive_mutex config_mutex_;
@@ -91,6 +161,18 @@ void DebayerNodelet::onInit()
   ReconfigureServer::CallbackType f = boost::bind(&DebayerNodelet::configCb, this, _1, _2);
   reconfigure_server_->setCallback(f);
 
+  #ifdef HAVE_ICEORYX
+  // Configure iceoryx publishers.
+  bool use_iox{false};
+  private_nh.param<bool>("use_iceoryx_image_pub", use_iox);
+  if (use_iox)
+  {
+    NODELET_DEBUG("instantiating iox publishers");
+    iox_mono_ = instantiateIoxPublisher(nh, "image_mono");
+    iox_color_ = instantiateIoxPublisher(nh, "image_color");
+  }
+  #endif
+
   // Monitor whether anyone is subscribed to the output
   typedef image_transport::SubscriberStatusCallback ConnectCB;
   ConnectCB connect_cb = boost::bind(&DebayerNodelet::connectCb, this);
@@ -104,7 +186,7 @@ void DebayerNodelet::onInit()
 void DebayerNodelet::connectCb()
 {
   boost::lock_guard<boost::mutex> lock(connect_mutex_);
-  if (pub_mono_.getNumSubscribers() == 0 && pub_color_.getNumSubscribers() == 0)
+  if (!ioxMono() && !ioxColor() && pub_mono_.getNumSubscribers() == 0 && pub_color_.getNumSubscribers() == 0)
     sub_raw_.shutdown();
   else if (!sub_raw_)
   {
@@ -121,10 +203,17 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
     bit_depth = 8;
 
   // First publish to mono if needed
-  if (pub_mono_.getNumSubscribers())
+  bool haveSubscribers = pub_mono_.getNumSubscribers();
+  if (ioxMono() || haveSubscribers)
   {
     if (enc::isMono(raw_msg->encoding))
-      pub_mono_.publish(raw_msg);
+    {
+      if (ioxMono())
+        publishIoxImage(ioxMono(), raw_msg);
+
+      if (haveSubscribers)
+        pub_mono_.publish(raw_msg);
+    }
     else
     {
       if ((bit_depth != 8) && (bit_depth != 16))
@@ -142,7 +231,12 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
             gray_msg = cv_bridge::toCvCopy(raw_msg, enc::MONO8)->toImageMsg();
           else
             gray_msg = cv_bridge::toCvCopy(raw_msg, enc::MONO16)->toImageMsg();
-          pub_mono_.publish(gray_msg);
+
+          if (ioxMono())
+            publishIoxImage(ioxMono(), gray_msg);
+
+          if (haveSubscribers)
+            pub_mono_.publish(gray_msg);
         }
         catch (cv_bridge::Exception &e)
         {
@@ -153,13 +247,18 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
   }
 
   // Next, publish to color
-  if (!pub_color_.getNumSubscribers())
+  haveSubscribers = pub_color_.getNumSubscribers();
+  if (ioxColor() || haveSubscribers)
     return;
 
   if (enc::isMono(raw_msg->encoding))
   {
     // For monochrome, no processing needed!
-    pub_color_.publish(raw_msg);
+    if (ioxColor())
+      publishIoxImage(ioxColor(), raw_msg);
+
+    if (haveSubscribers)
+      pub_color_.publish(raw_msg);
 
     // Warn if the user asked for color
     NODELET_WARN_THROTTLE(30,
@@ -168,7 +267,11 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
   }
   else if (enc::isColor(raw_msg->encoding))
   {
-    pub_color_.publish(raw_msg);
+    if (ioxColor())
+      publishIoxImage(ioxColor(), raw_msg);
+
+    if (haveSubscribers)
+      pub_color_.publish(raw_msg);
   }
   else if (enc::isBayer(raw_msg->encoding)) {
     int type = bit_depth == 8 ? CV_8U : CV_16U;
@@ -241,8 +344,12 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
           return;
         }
       }
+
+      if (ioxColor())
+        publishIoxImage(ioxColor(), color_msg);
       
-      pub_color_.publish(color_msg);
+      if (haveSubscribers)
+        pub_color_.publish(color_msg);
   }
   else if (raw_msg->encoding == enc::YUV422)
   {
@@ -251,7 +358,12 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
     try
     {
       color_msg = cv_bridge::toCvCopy(raw_msg, enc::BGR8)->toImageMsg();
-      pub_color_.publish(color_msg);
+
+      if (ioxColor())
+        publishIoxImage(ioxColor(), color_msg);
+      
+      if (haveSubscribers)
+        pub_color_.publish(color_msg);
     }
     catch (cv_bridge::Exception &e)
     {
@@ -277,6 +389,38 @@ void DebayerNodelet::configCb(Config &config, uint32_t level)
 {
   config_ = config;
 }
+
+#ifdef HAVE_ICEORYX
+void DebayerNodelet::publishIoxImage(iox::popo::Publisher *pub, const sensor_msgs::ImageConstPtr &img)
+{
+  enum { UseDynamicSizes = true };
+
+  if (!pub || !img)
+    return;
+
+  iox::mepoo::ChunkHeader *chunk{ };
+  ScopedAction freeChunk([pub, &chunk] { if (chunk) pub->freeChunk(chunk); });
+
+  const auto len = ros::serialization::serializationLength(*img);
+  NODELET_DEBUG("image ser len: %u", len);
+
+  chunk = pub->allocateChunkWithHeader(len, UseDynamicSizes);
+  if (!chunk)
+    return;
+
+  ros::serialization::OStream stream(
+    reinterpret_cast<uint8_t *>(chunk->payload()),
+    static_cast<uint32_t>(chunk->m_info.m_payloadSize));
+
+  ros::serialization::serialize(stream, *img);
+
+  pub->sendChunk(chunk);
+
+  // once the chunk has been sent, we don't want to free it - that's a job
+  // for the receivers.
+  chunk = nullptr;
+}
+#endif // HAVE_ICEORYX
 
 } // namespace image_proc
 

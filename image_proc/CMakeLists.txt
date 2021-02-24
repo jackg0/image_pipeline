@@ -7,6 +7,10 @@ find_package(catkin REQUIRED cv_bridge dynamic_reconfigure image_geometry image_
 find_package(OpenCV REQUIRED)
 find_package(Boost REQUIRED COMPONENTS thread)
 
+# find optional iceoryx libs.
+find_package(iceoryx_posh)
+find_package(iceoryx_utils)
+
 if(cv_bridge_VERSION VERSION_GREATER "1.12.0")
   add_compile_options(-std=c++11)
 endif()
@@ -39,6 +43,11 @@ add_library(${PROJECT_NAME} src/libimage_proc/processor.cpp
 )
 add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}_gencfg)
 target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES} ${Boost_LIBRARIES} ${OpenCV_LIBRARIES})
+if(iceoryx_posh_FOUND)
+    message(STATUS "building with iceoryx")
+    target_link_libraries(${PROJECT_NAME} iceoryx_posh::iceoryx_posh iceoryx_utils::iceoryx_utils)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_ICEORYX)
+endif()
 
 install(TARGETS ${PROJECT_NAME}
         ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
