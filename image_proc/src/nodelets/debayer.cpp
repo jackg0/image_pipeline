@@ -159,7 +159,18 @@ private:
 
   std::unique_ptr<iox::popo::Publisher> pub{ };
 };
+#else
+class IoxPublisher
+{
+public:
+  IoxPublisher() = default;
+  IoxPublisher(const ros::NodeHandle &, const std::string &) { }
 
+  bool hasSubscribers() noexcept { return false; }
+  operator bool() const noexcept { return false; }
+
+  void publish(const sensor_msgs::ImageConstPtr &) { }
+};
 #endif
 
 } // namespace
@@ -207,18 +218,6 @@ void DebayerNodelet::onInit()
   ReconfigureServer::CallbackType f = boost::bind(&DebayerNodelet::configCb, this, _1, _2);
   reconfigure_server_->setCallback(f);
 
-  #ifdef HAVE_ICEORYX
-  // Configure iceoryx publishers.
-  bool use_iox{false};
-  private_nh.getParam("use_iceoryx_image_pub", use_iox);
-  if (use_iox)
-  {
-    NODELET_DEBUG("instantiating iox publishers");
-    iox_mono_ = IoxPublisher(nh, "image_mono");
-    iox_color_ = IoxPublisher(nh, "image_color");
-  }
-  #endif
-
   // Monitor whether anyone is subscribed to the output
   typedef image_transport::SubscriberStatusCallback ConnectCB;
   ConnectCB connect_cb = boost::bind(&DebayerNodelet::connectCb, this);
@@ -227,6 +226,17 @@ void DebayerNodelet::onInit()
     boost::lock_guard<boost::mutex> lock(connect_mutex_);
     pub_mono_  = it_->advertise("image_mono",  1, connect_cb, connect_cb);
     pub_color_ = it_->advertise("image_color", 1, connect_cb, connect_cb);
+    NODELET_INFO("mono topic: %s", pub_mono_.getTopic().c_str());
+  }
+
+  // Configure iceoryx publishers.
+  bool use_iox{false};
+  private_nh.getParam("use_iceoryx_image_pub", use_iox);
+  if (use_iox)
+  {
+    NODELET_DEBUG("instantiating iox publishers");
+    iox_mono_ = IoxPublisher(nh, pub_mono_.getTopic());
+    iox_color_ = IoxPublisher(nh, pub_color_.getTopic());
   }
 
   private_nh.getParam("wait_for_subscribers", wait_for_subscribers_);
