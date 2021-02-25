@@ -135,7 +135,7 @@ public:
     ScopedAction freeChunk([this, &chunk] { if (chunk) pub->freeChunk(chunk); });
 
     const auto len = ros::serialization::serializationLength(*img);
-    ROS_DEBUG("debayer: image ser len %u", len);
+    ROS_DEBUG_ONCE("debayer: image ser len %u", len);
 
     chunk = pub->allocateChunkWithHeader(len, UseDynamicSizes);
     if (!chunk)
@@ -185,6 +185,8 @@ class DebayerNodelet : public nodelet::Nodelet
   boost::shared_ptr<ReconfigureServer> reconfigure_server_;
   Config config_;
 
+  bool wait_for_subscribers_{true};
+
   virtual void onInit();
 
   void connectCb();
@@ -221,19 +223,33 @@ void DebayerNodelet::onInit()
   typedef image_transport::SubscriberStatusCallback ConnectCB;
   ConnectCB connect_cb = boost::bind(&DebayerNodelet::connectCb, this);
   // Make sure we don't enter connectCb() between advertising and assigning to pub_XXX
-  boost::lock_guard<boost::mutex> lock(connect_mutex_);
-  pub_mono_  = it_->advertise("image_mono",  1, connect_cb, connect_cb);
-  pub_color_ = it_->advertise("image_color", 1, connect_cb, connect_cb);
+  {
+    boost::lock_guard<boost::mutex> lock(connect_mutex_);
+    pub_mono_  = it_->advertise("image_mono",  1, connect_cb, connect_cb);
+    pub_color_ = it_->advertise("image_color", 1, connect_cb, connect_cb);
+  }
+
+  private_nh.getParam("wait_for_subscribers", wait_for_subscribers_);
+
+  if (!wait_for_subscribers_)
+  {
+    NODELET_DEBUG("debayer: not waiting for subscribers before publishing.");
+    connectCb();
+  }
 }
 
 // Handles (un)subscribing when clients (un)subscribe
 void DebayerNodelet::connectCb()
 {
   boost::lock_guard<boost::mutex> lock(connect_mutex_);
-  if (!iox_mono_.hasSubscribers() && !iox_color_.hasSubscribers() && pub_mono_.getNumSubscribers() == 0 && pub_color_.getNumSubscribers() == 0)
+  if (wait_for_subscribers_ && pub_mono_.getNumSubscribers() == 0 && pub_color_.getNumSubscribers() == 0)
+  {
+    NODELET_INFO("debayer: cancelling subscription to raw input topic");
     sub_raw_.shutdown();
+  }
   else if (!sub_raw_)
   {
+    NODELET_INFO("debayer: subscribing to raw input topic");
     image_transport::TransportHints hints("raw", ros::TransportHints(), getPrivateNodeHandle());
     sub_raw_ = it_->subscribe("image_raw", 1, &DebayerNodelet::imageCb, this, hints);
   }
