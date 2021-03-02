@@ -431,7 +431,7 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
 
       if (iox_color_.hasSubscribers())
         iox_color_.publish(color_msg);
-      
+
       if (haveSubscribers)
         pub_color_.publish(color_msg);
     }
