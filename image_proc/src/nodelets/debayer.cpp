@@ -234,9 +234,13 @@ void DebayerNodelet::onInit()
   private_nh.getParam("use_iceoryx_image_pub", use_iox);
   if (use_iox)
   {
-    NODELET_DEBUG("instantiating iox publishers");
+    NODELET_INFO("(debayer) instantiating iox publishers");
     iox_mono_ = IoxPublisher(nh, pub_mono_.getTopic());
     iox_color_ = IoxPublisher(nh, pub_color_.getTopic());
+  }
+  else
+  {
+    NODELET_INFO("(debayer) iox pub disabled.");
   }
 
   private_nh.getParam("wait_for_subscribers", wait_for_subscribers_);
