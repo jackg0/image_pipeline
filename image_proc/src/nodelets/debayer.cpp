@@ -197,6 +197,8 @@ class DebayerNodelet : public nodelet::Nodelet
   Config config_;
 
   bool wait_for_subscribers_{true};
+  bool pub_mono_images_{true};
+  bool pub_color_images_{true};
 
   virtual void onInit();
 
@@ -243,6 +245,12 @@ void DebayerNodelet::onInit()
     NODELET_INFO("(debayer) iox pub disabled.");
   }
 
+  private_nh.getParam("pub_mono_images", pub_mono_images_);
+  private_nh.getParam("pub_color_images", pub_color_images_);
+
+  NODELET_DEBUG_STREAM("debayer: pub_mono_images set to " << pub_mono_images_);
+  NODELET_DEBUG_STREAM("debayer: pub_color_images set to " << pub_color_images_);
+
   private_nh.getParam("wait_for_subscribers", wait_for_subscribers_);
 
   if (!wait_for_subscribers_)
@@ -278,7 +286,7 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
 
   // First publish to mono if needed
   bool haveSubscribers = pub_mono_.getNumSubscribers();
-  if (iox_mono_.hasSubscribers() || haveSubscribers)
+  if (pub_mono_images_ && (iox_mono_.hasSubscribers() || haveSubscribers))
   {
     if (enc::isMono(raw_msg->encoding))
     {
@@ -322,7 +330,7 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
 
   // Next, publish to color
   haveSubscribers = pub_color_.getNumSubscribers();
-  if (!iox_color_.hasSubscribers() && !haveSubscribers)
+  if (!pub_color_images_ || (!iox_color_.hasSubscribers() && !haveSubscribers))
     return;
 
   if (enc::isMono(raw_msg->encoding))
