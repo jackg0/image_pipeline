@@ -285,15 +285,16 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
     bit_depth = 8;
 
   // First publish to mono if needed
-  bool haveSubscribers = pub_mono_.getNumSubscribers();
-  if (pub_mono_images_ && (iox_mono_.hasSubscribers() || haveSubscribers))
+  bool have_subscribers = pub_mono_.getNumSubscribers();
+  bool have_mono_subs = iox_mono_.hasSubscribers() || have_subscribers;
+  if (pub_mono_images_ && have_mono_subs)
   {
     if (enc::isMono(raw_msg->encoding))
     {
       if (iox_mono_.hasSubscribers())
         iox_mono_.publish(raw_msg);
 
-      if (haveSubscribers)
+      if (have_subscribers)
         pub_mono_.publish(raw_msg);
     }
     else
@@ -317,7 +318,7 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
           if (iox_mono_.hasSubscribers())
             iox_mono_.publish(gray_msg);
 
-          if (haveSubscribers)
+          if (have_subscribers)
             pub_mono_.publish(gray_msg);
         }
         catch (cv_bridge::Exception &e)
@@ -329,8 +330,9 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
   }
 
   // Next, publish to color
-  haveSubscribers = pub_color_.getNumSubscribers();
-  if (!pub_color_images_ || (!iox_color_.hasSubscribers() && !haveSubscribers))
+  have_subscribers = pub_color_.getNumSubscribers();
+  bool have_color_subs = iox_color_.hasSubscribers() || have_subscribers;
+  if (!pub_color_images_ || !have_color_subs)
     return;
 
   if (enc::isMono(raw_msg->encoding))
@@ -339,7 +341,7 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
     if (iox_color_.hasSubscribers())
       iox_color_.publish(raw_msg);
 
-    if (haveSubscribers)
+    if (have_subscribers)
       pub_color_.publish(raw_msg);
 
     // Warn if the user asked for color
@@ -352,7 +354,7 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
     if (iox_color_.hasSubscribers())
       iox_color_.publish(raw_msg);
 
-    if (haveSubscribers)
+    if (have_subscribers)
       pub_color_.publish(raw_msg);
   }
   else if (enc::isBayer(raw_msg->encoding)) {
@@ -430,7 +432,7 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
       if (iox_color_.hasSubscribers())
         iox_color_.publish(color_msg);
       
-      if (haveSubscribers)
+      if (have_subscribers)
         pub_color_.publish(color_msg);
   }
   else if (raw_msg->encoding == enc::YUV422)
@@ -444,7 +446,7 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
       if (iox_color_.hasSubscribers())
         iox_color_.publish(color_msg);
 
-      if (haveSubscribers)
+      if (have_subscribers)
         pub_color_.publish(color_msg);
     }
     catch (cv_bridge::Exception &e)
