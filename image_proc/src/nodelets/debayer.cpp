@@ -86,12 +86,20 @@ struct ScopedAction
   Action action;
 };
 
-std::unique_ptr<iox::popo::Publisher> instantiateIoxPublisher(const ros::NodeHandle &nh, const std::string &topic)
+std::unique_ptr<iox::popo::Publisher> instantiateIoxPublisher(const std::string &service, std::string &process, const std::string &topic)
 {
+  if (process[0] != '/')
+    process = "/" + process;
 
-  std::string instanceName = nh.resolveName("image_proc_debayer");
-  std::replace(instanceName.begin()+1, instanceName.end(), '/', '_');
-  iox::runtime::PoshRuntime::getInstance(instanceName);
+  if (process.size() > 100)
+  {
+    throw std::invalid_argument(
+      "image_proc debayer nodelet: process " +
+      process + " is too long (max: 100 chars)");
+  }
+
+  std::replace(process.begin()+1, process.end(), '/', '_');
+  iox::runtime::PoshRuntime::getInstance(process);
 
   if (topic.size() > 100)
   {
@@ -100,11 +108,14 @@ std::unique_ptr<iox::popo::Publisher> instantiateIoxPublisher(const ros::NodeHan
       topic + " is too long (max: 100 chars)");
   }
 
+  iox::cxx::CString100 serviceCStr;
+  serviceCStr.unsafe_assign(service);
+
   iox::cxx::CString100 topicCStr;
   topicCStr.unsafe_assign(topic);
 
   return std::unique_ptr<iox::popo::Publisher>{
-    new iox::popo::Publisher(iox::capro::ServiceDescription{"debayer", "0", topicCStr})};
+    new iox::popo::Publisher(iox::capro::ServiceDescription{serviceCStr, "0", topicCStr})};
 }
 
 class IoxPublisher
@@ -112,8 +123,8 @@ class IoxPublisher
 public:
   IoxPublisher() = default;
 
-  IoxPublisher(const ros::NodeHandle &nh, const std::string &topic)
-    : pub(instantiateIoxPublisher(nh, topic))
+  IoxPublisher(const std::string &service, std::string &process, const std::string &topic)
+    : pub(instantiateIoxPublisher(service, process, topic))
   {
       if (pub)
         pub->offer();
@@ -236,12 +247,16 @@ void DebayerNodelet::onInit()
 
   // Configure iceoryx publishers.
   bool use_iox{false};
+  std::string iox_service("debayer");
+  std::string iox_process("/image_proc_debayer");
   private_nh.getParam("use_iceoryx_image_pub", use_iox);
+  private_nh.getParam("iox_service", iox_service);
+  private_nh.getParam("iox_process", iox_process);
   if (use_iox)
   {
     NODELET_INFO("(debayer) instantiating iox publishers");
-    iox_mono_ = IoxPublisher(nh, pub_mono_.getTopic());
-    iox_color_ = IoxPublisher(nh, pub_color_.getTopic());
+    iox_mono_ = IoxPublisher(iox_service, iox_process, pub_mono_.getTopic());
+    iox_color_ = IoxPublisher(iox_service, iox_process, pub_color_.getTopic());
   }
   else
   {
