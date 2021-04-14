@@ -88,7 +88,10 @@ struct ScopedAction
 
 std::unique_ptr<iox::popo::Publisher> instantiateIoxPublisher(const ros::NodeHandle &nh, const std::string &topic)
 {
-  iox::runtime::PoshRuntime::getInstance(nh.resolveName("/image_proc_debayer"));
+
+  std::string instanceName = nh.resolveName("image_proc_debayer");
+  std::replace(instanceName.begin()+1, instanceName.end(), '/', '_');
+  iox::runtime::PoshRuntime::getInstance(instanceName);
 
   if (topic.size() > 100)
   {
@@ -333,6 +336,7 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
   have_subscribers = pub_color_.getNumSubscribers();
   bool have_color_subs = iox_color_.hasSubscribers() || have_subscribers;
   if (!pub_color_images_ || !have_color_subs)
+    NODELET_DEBUG_STREAM("Not publishing color images.");
     return;
 
   if (enc::isMono(raw_msg->encoding))
