@@ -351,7 +351,6 @@ void DebayerNodelet::imageCb(const sensor_msgs::ImageConstPtr& raw_msg)
   have_subscribers = pub_color_.getNumSubscribers();
   bool have_color_subs = iox_color_.hasSubscribers() || have_subscribers;
   if (!pub_color_images_ || !have_color_subs)
-    NODELET_DEBUG_STREAM("Not publishing color images.");
     return;
 
   if (enc::isMono(raw_msg->encoding))
