@@ -86,8 +86,9 @@ struct ScopedAction
   Action action;
 };
 
-std::unique_ptr<iox::popo::Publisher> instantiateIoxPublisher(const std::string &service, std::string &process, const std::string &topic)
+std::unique_ptr<iox::popo::Publisher> instantiateIoxPublisher(const std::string &ioxName, const std::string &topic)
 {
+  std::string process{ioxName};
   if (process[0] != '/')
     process = "/" + process;
 
@@ -109,7 +110,7 @@ std::unique_ptr<iox::popo::Publisher> instantiateIoxPublisher(const std::string 
   }
 
   iox::cxx::CString100 serviceCStr;
-  serviceCStr.unsafe_assign(service);
+  serviceCStr.unsafe_assign(ioxName);
 
   iox::cxx::CString100 topicCStr;
   topicCStr.unsafe_assign(topic);
@@ -123,8 +124,8 @@ class IoxPublisher
 public:
   IoxPublisher() = default;
 
-  IoxPublisher(const std::string &service, std::string &process, const std::string &topic)
-    : pub(instantiateIoxPublisher(service, process, topic))
+  IoxPublisher(const std::string &ioxName, const std::string &topic)
+    : pub(instantiateIoxPublisher(ioxName, topic))
   {
       if (pub)
         pub->offer();
@@ -178,7 +179,7 @@ class IoxPublisher
 {
 public:
   IoxPublisher() = default;
-  IoxPublisher(const ros::NodeHandle &, const std::string &) { }
+  IoxPublisher(const std::string &, const std::string &) { }
 
   bool hasSubscribers() noexcept { return false; }
   operator bool() const noexcept { return false; }
@@ -247,16 +248,14 @@ void DebayerNodelet::onInit()
 
   // Configure iceoryx publishers.
   bool use_iox{false};
-  std::string iox_service("debayer");
-  std::string iox_process("/image_proc_debayer");
+  std::string iox_name("image_proc_debayer");
   private_nh.getParam("use_iceoryx_image_pub", use_iox);
-  private_nh.getParam("iox_service", iox_service);
-  private_nh.getParam("iox_process", iox_process);
+  private_nh.getParam("iox_name", iox_name);
   if (use_iox)
   {
     NODELET_INFO("(debayer) instantiating iox publishers");
-    iox_mono_ = IoxPublisher(iox_service, iox_process, pub_mono_.getTopic());
-    iox_color_ = IoxPublisher(iox_service, iox_process, pub_color_.getTopic());
+    iox_mono_ = IoxPublisher(iox_name, pub_mono_.getTopic());
+    iox_color_ = IoxPublisher(iox_name, pub_color_.getTopic());
   }
   else
   {
