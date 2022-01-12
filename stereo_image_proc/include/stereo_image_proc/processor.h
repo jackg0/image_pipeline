@@ -40,6 +40,8 @@
 #include <sensor_msgs/PointCloud.h>
 #include <sensor_msgs/PointCloud2.h>
 
+#include <opencv2/calib3d.hpp>
+
 namespace stereo_image_proc {
 
 struct StereoImageSet
